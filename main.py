@@ -1,6 +1,4 @@
-"""
-Telegram-ga o'xshash shaxsiy chat Mini App
-"""
+"""Telegram-ga o'xshash shaxsiy chat Mini App"""
 import os, json, logging, asyncio, hashlib, hmac, uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict
@@ -52,7 +50,6 @@ class User(Base):
     last_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     photo_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     bio: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    language: Mapped[str] = mapped_column(String(5), default="uz")
     is_online: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -82,8 +79,6 @@ class Message(Base):
     chat_id: Mapped[int] = mapped_column(Integer, index=True)
     sender_id: Mapped[int] = mapped_column(BigInteger, index=True)
     text: Mapped[str] = mapped_column(Text)
-    message_type: Mapped[str] = mapped_column(String(20), default="text")
-    media_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     reply_to_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     is_edited: Mapped[bool] = mapped_column(Boolean, default=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -95,7 +90,6 @@ class Message(Base):
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    logger.info("✅ DB tayyor")
 
 
 async def get_session():
@@ -107,17 +101,17 @@ class Manager:
     def __init__(self):
         self.active: Dict[int, set] = {}
 
-    async def connect(self, uid: int, ws: WebSocket):
+    async def connect(self, uid, ws):
         await ws.accept()
         self.active.setdefault(uid, set()).add(ws)
 
-    def disconnect(self, uid: int, ws: WebSocket):
+    def disconnect(self, uid, ws):
         if uid in self.active:
             self.active[uid].discard(ws)
             if not self.active[uid]:
                 del self.active[uid]
 
-    async def send_to(self, uid: int, msg: dict):
+    async def send_to(self, uid, msg):
         if uid not in self.active:
             return
         data = json.dumps(msg, default=str)
@@ -127,7 +121,7 @@ class Manager:
             except Exception:
                 self.disconnect(uid, ws)
 
-    async def send_to_many(self, uids: list, msg: dict):
+    async def send_to_many(self, uids, msg):
         for uid in uids:
             await self.send_to(uid, msg)
 
@@ -153,23 +147,17 @@ def verify_init_data(init_data: str) -> Optional[dict]:
             return None
         uj = parsed.get("user")
         return json.loads(uj) if uj else None
-    except Exception as e:
-        logger.error(f"initData: {e}")
+    except Exception:
         return None
 
 
-async def get_or_create_user(s: AsyncSession, tgu: dict) -> User:
+async def get_or_create_user(s, tgu):
     r = await s.execute(select(User).where(User.telegram_id == tgu["id"]))
     u = r.scalar_one_or_none()
     if not u:
-        u = User(
-            telegram_id=tgu["id"],
-            username=tgu.get("username"),
-            first_name=tgu.get("first_name"),
-            last_name=tgu.get("last_name"),
-            photo_url=tgu.get("photo_url"),
-            is_admin=tgu["id"] in ADMIN_IDS,
-        )
+        u = User(telegram_id=tgu["id"], username=tgu.get("username"),
+                 first_name=tgu.get("first_name"), last_name=tgu.get("last_name"),
+                 photo_url=tgu.get("photo_url"), is_admin=tgu["id"] in ADMIN_IDS)
         s.add(u)
     else:
         u.username = tgu.get("username")
@@ -183,29 +171,23 @@ async def get_or_create_user(s: AsyncSession, tgu: dict) -> User:
     return u
 
 
-def user_dict(u: User) -> dict:
-    return {
-        "id": u.telegram_id, "first_name": u.first_name, "last_name": u.last_name,
-        "username": u.username, "photo_url": u.photo_url, "bio": u.bio,
-        "is_online": u.is_online, "is_admin": u.is_admin,
-        "xp": u.xp, "level": u.level, "coins": u.coins,
-        "status_emoji": u.status_emoji, "status_text": u.status_text,
-        "last_seen": u.last_seen.isoformat() if u.last_seen else None,
-    }
+def user_dict(u):
+    return {"id": u.telegram_id, "first_name": u.first_name, "last_name": u.last_name,
+            "username": u.username, "photo_url": u.photo_url, "bio": u.bio,
+            "is_online": u.is_online, "is_admin": u.is_admin, "xp": u.xp,
+            "level": u.level, "coins": u.coins, "status_emoji": u.status_emoji,
+            "status_text": u.status_text,
+            "last_seen": u.last_seen.isoformat() if u.last_seen else None}
 
 
-def msg_dict(m: Message, reply_preview: Optional[str] = None) -> dict:
-    return {
-        "id": m.id, "chat_id": m.chat_id, "sender_id": m.sender_id,
-        "text": m.text, "message_type": m.message_type, "media_url": m.media_url,
-        "reply_to_id": m.reply_to_id, "reply_preview": reply_preview,
-        "reactions": m.reactions or "{}", "is_edited": m.is_edited,
-        "is_read": m.is_read,
-        "created_at": m.created_at.isoformat(),
-    }
+def msg_dict(m, rp=None):
+    return {"id": m.id, "chat_id": m.chat_id, "sender_id": m.sender_id,
+            "text": m.text, "reply_to_id": m.reply_to_id, "reply_preview": rp,
+            "reactions": m.reactions or "{}", "is_edited": m.is_edited,
+            "is_read": m.is_read, "created_at": m.created_at.isoformat()}
 
 
-bot: Optional[Bot] = None
+bot = None
 dp = Dispatcher() if BOT_TOKEN else None
 
 if dp is not None:
@@ -219,14 +201,8 @@ if dp is not None:
         ]])
         await message.answer(
             f"👋 Salom, <b>{message.from_user.first_name}</b>!\n\n"
-            "🚀 Chat Mini App'ga xush kelibsiz!\n\n"
-            "Qidiruv orqali boshqa foydalanuvchilarni toping va ular bilan yozishing.",
-            reply_markup=kb, parse_mode="HTML"
-        )
-
-    @dp.message(Command("help"))
-    async def cmd_help(message: types.Message):
-        await message.answer("Yordam: /start /help /stats /top", parse_mode="HTML")
+            "🚀 Chat Mini App'ga xush kelibsiz!",
+            reply_markup=kb, parse_mode="HTML")
 
     @dp.message(Command("stats"))
     async def cmd_stats(message: types.Message):
@@ -234,39 +210,23 @@ if dp is not None:
             u = await s.scalar(select(func.count(User.id)))
             m = await s.scalar(select(func.count(Message.id)))
             await message.answer(
-                f"👥 Foydalanuvchilar: <b>{u or 0}</b>\n"
-                f"💬 Xabarlar: <b>{m or 0}</b>\n"
-                f"🟢 Online: <b>{len(manager.active)}</b>",
-                parse_mode="HTML"
-            )
-
-    @dp.message(Command("top"))
-    async def cmd_top(message: types.Message):
-        async for s in get_session():
-            r = await s.execute(select(User).order_by(desc(User.xp)).limit(10))
-            us = r.scalars().all()
-            text = "🏆 <b>TOP 10</b>\n\n"
-            for i, u in enumerate(us, 1):
-                text += f"{i}. {u.first_name} — Lv {u.level} ({u.xp} XP)\n"
-            await message.answer(text, parse_mode="HTML")
+                f"👥 {u or 0} | 💬 {m or 0} | 🟢 {len(manager.active)}",
+                parse_mode="HTML")
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app):
     global bot
     await init_db()
     if BOT_TOKEN and WEBAPP_URL:
         bot = Bot(token=BOT_TOKEN)
         try:
-            await bot.set_webhook(
-                url=f"{WEBAPP_URL}{WEBHOOK_PATH}",
-                secret_token=WEBHOOK_SECRET,
-                drop_pending_updates=True,
-                allowed_updates=dp.resolve_used_update_types() if dp else None,
-            )
-            await bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(text="💬 Chat", web_app=WebAppInfo(url=WEBAPP_URL))
-            )
+            await bot.set_webhook(url=f"{WEBAPP_URL}{WEBHOOK_PATH}",
+                                  secret_token=WEBHOOK_SECRET,
+                                  drop_pending_updates=True,
+                                  allowed_updates=dp.resolve_used_update_types() if dp else None)
+            await bot.set_chat_menu_button(menu_button=MenuButtonWebApp(
+                text="💬 Chat", web_app=WebAppInfo(url=WEBAPP_URL)))
             logger.info(f"✅ Webhook: {WEBAPP_URL}{WEBHOOK_PATH}")
         except Exception as e:
             logger.error(f"Bot setup: {e}")
@@ -312,561 +272,257 @@ class ReactReq(BaseModel):
     emoji: str
 
 
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    return HTMLResponse(HTML_PAGE)
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-
-
-@app.get("/ping")
-async def ping():
-    return "pong"
-
-
-@app.post(WEBHOOK_PATH)
-async def webhook(request: Request):
-    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
-        return JSONResponse({"ok": False}, status_code=403)
-    if not bot or not dp:
-        return JSONResponse({"ok": False}, status_code=503)
-    try:
-        u = types.Update.model_validate(await request.json())
-        await dp.feed_update(bot=bot, update=u)
-    except Exception as e:
-        logger.error(f"Webhook: {e}")
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/init")
-async def api_init(req: InitReq):
-    tgu = verify_init_data(req.initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "initData yaroqsiz"}, status_code=401)
-    async for s in get_session():
-        u = await get_or_create_user(s, tgu)
-        if u.is_banned:
-            return JSONResponse({"ok": False, "error": "Siz banlangansiz"}, status_code=403)
-        return {"ok": True, "user": user_dict(u)}
-
-
-@app.put("/api/me")
-async def api_me_update(req: ProfileReq):
-    tgu = verify_init_data(req.initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    async for s in get_session():
-        u = await get_or_create_user(s, tgu)
-        if req.first_name is not None:
-            u.first_name = req.first_name[:100]
-        if req.bio is not None:
-            u.bio = req.bio[:500]
-        if req.status_emoji is not None:
-            u.status_emoji = req.status_emoji[:10]
-        if req.status_text is not None:
-            u.status_text = req.status_text[:100]
-        await s.commit()
-        await s.refresh(u)
-        return {"ok": True, "user": user_dict(u)}
-
-
-@app.get("/api/users/search")
-async def api_search(q: str = ""):
-    q = q.strip()
-    if not q:
-        return {"ok": True, "users": []}
-    # @ belgisi va t.me linkni tozalash
-    q = q.lstrip("@")
-    if "t.me/" in q:
-        q = q.split("t.me/")[-1]
-    if "telegram.me/" in q:
-        q = q.split("telegram.me/")[-1]
-    q = q.split("?")[0].strip()
-    if len(q) < 1:
-        return {"ok": True, "users": []}
-
-    async for s in get_session():
-        r = await s.execute(
-            select(User).where(or_(
-                User.username.ilike(f"%{q}%"),
-                User.first_name.ilike(f"%{q}%"),
-                User.last_name.ilike(f"%{q}%"),
-            )).where(User.is_banned == False).limit(20)
-        )
-        users = r.scalars().all()
-        return {"ok": True, "users": [user_dict(u) for u in users]}
-
-
-@app.get("/api/users/{user_id}")
-async def api_user(user_id: int):
-    async for s in get_session():
-        r = await s.execute(select(User).where(User.telegram_id == user_id))
-        u = r.scalar_one_or_none()
-        if not u:
-            return JSONResponse({"ok": False, "error": "Topilmadi"}, status_code=404)
-        return {"ok": True, "user": user_dict(u)}
-
-
-@app.get("/api/chats")
-async def api_chats(req: InitReq):
-    tgu = verify_init_data(req.initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    my_id = tgu["id"]
-    async for s in get_session():
-        r = await s.execute(
-            select(Chat).where(or_(
-                Chat.user1_id == my_id, Chat.user2_id == my_id
-            )).order_by(desc(Chat.last_message_at), desc(Chat.created_at))
-        )
-        chats = r.scalars().all()
-        result = []
-        for c in chats:
-            other_id = c.user2_id if c.user1_id == my_id else c.user1_id
-            ur = await s.execute(select(User).where(User.telegram_id == other_id))
-            other = ur.scalar_one_or_none()
-            # o'qilmagan xabarlar soni
-            unread = await s.scalar(
-                select(func.count(Message.id)).where(and_(
-                    Message.chat_id == c.id,
-                    Message.sender_id != my_id,
-                    Message.is_read == False,
-                    Message.is_deleted == False,
-                ))
-            ) or 0
-            result.append({
-                "chat_id": c.id,
-                "other_user": user_dict(other) if other else None,
-                "last_message_text": c.last_message_text,
-                "last_message_at": c.last_message_at.isoformat() if c.last_message_at else None,
-                "unread": unread,
-            })
-        return {"ok": True, "chats": result}
-
-
-@app.post("/api/chats/open")
-async def api_open_chat(req: OpenChatReq):
-    tgu = verify_init_data(req.initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    my_id = tgu["id"]
-    other_id = req.user_id
-    if my_id == other_id:
-        return JSONResponse({"ok": False, "error": "O'zingiz bilan chat ocholmaysiz"}, status_code=400)
-    a, b = min(my_id, other_id), max(my_id, other_id)
-    key = f"{a}_{b}"
-    async for s in get_session():
-        # other user bazada bormi?
-        r = await s.execute(select(User).where(User.telegram_id == other_id))
-        other = r.scalar_one_or_none()
-        if not other:
-            return JSONResponse({"ok": False, "error": "Foydalanuvchi topilmadi. U botga /start bosmagan bo'lishi mumkin."}, status_code=404)
-        # mavjud chatni topish
-        r = await s.execute(select(Chat).where(Chat.chat_key == key))
-        chat = r.scalar_one_or_none()
-        if not chat:
-            chat = Chat(user1_id=a, user2_id=b, chat_key=key)
-            s.add(chat)
-            await s.commit()
-            await s.refresh(chat)
-        return {
-            "ok": True,
-            "chat_id": chat.id,
-            "other_user": user_dict(other),
-        }
-
-
-@app.get("/api/chats/{chat_id}/messages")
-async def api_messages(chat_id: int, initData: str = "", after_id: int = 0):
-    tgu = verify_init_data(initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    my_id = tgu["id"]
-    async for s in get_session():
-        r = await s.execute(select(Chat).where(Chat.id == chat_id))
-        c = r.scalar_one_or_none()
-        if not c or my_id not in (c.user1_id, c.user2_id):
-            return JSONResponse({"ok": False, "error": "Ruxsat yo'q"}, status_code=403)
-
-        if after_id > 0:
-            r = await s.execute(
-                select(Message).where(and_(
-                    Message.chat_id == chat_id,
-                    Message.id > after_id,
-                    Message.is_deleted == False,
-                )).order_by(Message.id.asc()).limit(200)
-            )
-        else:
-            r = await s.execute(
-                select(Message).where(and_(
-                    Message.chat_id == chat_id,
-                    Message.is_deleted == False,
-                )).order_by(desc(Message.id)).limit(100)
-            )
-        msgs = list(r.scalars().all())
-        if after_id == 0:
-            msgs.reverse()
-
-        rids = [m.reply_to_id for m in msgs if m.reply_to_id]
-        rmap = {}
-        if rids:
-            rr = await s.execute(select(Message).where(Message.id.in_(rids)))
-            rmap = {x.id: x for x in rr.scalars().all()}
-
-        result = []
-        for m in msgs:
-            rp = None
-            if m.reply_to_id and m.reply_to_id in rmap:
-                rp = rmap[m.reply_to_id].text[:60]
-                if len(rmap[m.reply_to_id].text) > 60:
-                    rp += "..."
-            result.append(msg_dict(m, rp))
-
-        # o'qilgan deb belgilash
-        await s.execute(
-            Message.__table__.update().where(and_(
-                Message.chat_id == chat_id,
-                Message.sender_id != my_id,
-                Message.is_read == False,
-            )).values(is_read=True)
-        )
-        await s.commit()
-
-        return {"ok": True, "messages": result}
-
-
-@app.post("/api/chats/{chat_id}/messages")
-async def api_send(chat_id: int, req: SendMsgReq):
-    tgu = verify_init_data(req.initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    my_id = tgu["id"]
-    text = (req.text or "").strip()
-    if not text:
-        return JSONResponse({"ok": False, "error": "Bo'sh xabar"}, status_code=400)
-    if len(text) > 4000:
-        return JSONResponse({"ok": False, "error": "Juda uzun"}, status_code=400)
-
-    async for s in get_session():
-        r = await s.execute(select(Chat).where(Chat.id == chat_id))
-        c = r.scalar_one_or_none()
-        if not c or my_id not in (c.user1_id, c.user2_id):
-            return JSONResponse({"ok": False, "error": "Ruxsat yo'q"}, status_code=403)
-
-        u = await get_or_create_user(s, tgu)
-
-        rp = None
-        if req.reply_to_id:
-            rr = await s.execute(select(Message).where(Message.id == req.reply_to_id))
-            p = rr.scalar_one_or_none()
-            if p:
-                rp = p.text[:60] + ("..." if len(p.text) > 60 else "")
-
-        m = Message(
-            chat_id=chat_id, sender_id=my_id, text=text,
-            reply_to_id=req.reply_to_id
-        )
-        s.add(m)
-        c.last_message_text = text[:200]
-        c.last_message_at = datetime.utcnow()
-        u.xp += 5
-        u.level = 1 + u.xp // 100
-        u.coins += 2
-        await s.commit()
-        await s.refresh(m)
-
-        pl = msg_dict(m, rp)
-        # ikkala foydalanuvchiga yuborish
-        await manager.send_to_many(
-            [c.user1_id, c.user2_id],
-            {"type": "new_message", "data": pl}
-        )
-        return {"ok": True, "message": pl}
-
-
-@app.delete("/api/messages/{mid}")
-async def api_del(mid: int, req: InitReq):
-    tgu = verify_init_data(req.initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    async for s in get_session():
-        r = await s.execute(select(Message).where(Message.id == mid))
-        m = r.scalar_one_or_none()
-        if not m:
-            return JSONResponse({"ok": False, "error": "Topilmadi"}, status_code=404)
-        if m.sender_id != tgu["id"]:
-            return JSONResponse({"ok": False, "error": "Ruxsat yo'q"}, status_code=403)
-        r = await s.execute(select(Chat).where(Chat.id == m.chat_id))
-        c = r.scalar_one_or_none()
-        m.is_deleted = True
-        await s.commit()
-        if c:
-            await manager.send_to_many(
-                [c.user1_id, c.user2_id],
-                {"type": "delete_message", "data": {"id": mid, "chat_id": m.chat_id}}
-            )
-        return {"ok": True}
-
-
-@app.post("/api/messages/{mid}/react")
-async def api_react(mid: int, req: ReactReq):
-    tgu = verify_init_data(req.initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    e = req.emoji.strip()[:8]
-    if not e:
-        return JSONResponse({"ok": False, "error": "Emoji kerak"}, status_code=400)
-    async for s in get_session():
-        r = await s.execute(select(Message).where(Message.id == mid))
-        m = r.scalar_one_or_none()
-        if not m:
-            return JSONResponse({"ok": False, "error": "Topilmadi"}, status_code=404)
-        try:
-            reacts = json.loads(m.reactions or "{}")
-        except Exception:
-            reacts = {}
-        us = reacts.get(e, [])
-        uid = tgu["id"]
-        if uid in us:
-            us.remove(uid)
-            if not us:
-                del reacts[e]
-        else:
-            us.append(uid)
-            reacts[e] = us
-        m.reactions = json.dumps(reacts)
-        await s.commit()
-        r = await s.execute(select(Chat).where(Chat.id == m.chat_id))
-        c = r.scalar_one_or_none()
-        if c:
-            await manager.send_to_many(
-                [c.user1_id, c.user2_id],
-                {"type": "reaction", "data": {"id": mid, "chat_id": m.chat_id, "reactions": m.reactions}}
-            )
-        return {"ok": True, "reactions": reacts}
-
-
-@app.get("/api/stats")
-async def api_stats():
-    async for s in get_session():
-        u = await s.scalar(select(func.count(User.id)))
-        m = await s.scalar(select(func.count(Message.id)))
-        c = await s.scalar(select(func.count(Chat.id)))
-        return {"ok": True, "users": u or 0, "messages": m or 0, "chats": c or 0, "online": len(manager.active)}
-
-
-@app.get("/api/leaderboard")
-async def api_leaderboard():
-    async for s in get_session():
-        r = await s.execute(select(User).order_by(desc(User.xp)).limit(10))
-        return {"ok": True, "users": [user_dict(u) for u in r.scalars().all()]}
-
-
-@app.post("/api/upload")
-async def api_upload(file: UploadFile = File(...), initData: str = Form(...)):
-    tgu = verify_init_data(initData)
-    if not tgu:
-        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
-    contents = await file.read()
-    if len(contents) > 10 * 1024 * 1024:
-        return JSONResponse({"ok": False, "error": "Fayl 10 MB dan oshmasin"}, status_code=400)
-    ext = os.path.splitext(file.filename or "file")[1].lower()
-    allowed = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".mp3", ".wav", ".ogg", ".pdf", ".docx", ".xlsx", ".txt", ".zip")
-    if ext not in allowed:
-        return JSONResponse({"ok": False, "error": "Fayl turi ruxsat etilmagan"}, status_code=400)
-    fname = uuid.uuid4().hex + ext
-    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
-        f.write(contents)
-    return {"ok": True, "url": "/uploads/" + fname}
-
-
-@app.websocket("/ws")
-async def ws_ep(ws: WebSocket, token: str = ""):
-    tgu = verify_init_data(token)
-    if not tgu:
-        await ws.close(code=4001)
-        return
-    uid = tgu["id"]
-    async for s in get_session():
-        r = await s.execute(select(User).where(User.telegram_id == uid))
-        u = r.scalar_one_or_none()
-        if not u or u.is_banned:
-            await ws.close(code=4003)
-            return
-        u.is_online = True
-        await s.commit()
-    await manager.connect(uid, ws)
-    try:
-        while True:
-            try:
-                data = await asyncio.wait_for(ws.receive_text(), timeout=30)
-                try:
-                    p = json.loads(data)
-                    if p.get("type") == "ping":
-                        await ws.send_text(json.dumps({"type": "pong"}))
-                except Exception:
-                    pass
-            except asyncio.TimeoutError:
-                try:
-                    await ws.send_text(json.dumps({"type": "ping"}))
-                except Exception:
-                    break
-    except WebSocketDisconnect:
-        pass
-    except Exception:
-        pass
-    finally:
-        manager.disconnect(uid, ws)
-        async for s in get_session():
-            r = await s.execute(select(User).where(User.telegram_id == uid))
-            u = r.scalar_one_or_none()
-            if u:
-                u.is_online = False
-                u.last_seen = datetime.utcnow()
-                await s.commit()
-
-
-# ═══════════════════════ HTML_PAGE ═══════════════════════
 HTML_PAGE = r"""<!DOCTYPE html>
 <html lang="uz">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0f">
 <title>Chat</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans-serif;background:#0f0f14;color:#f5f5f7;height:100vh;overflow:hidden;font-size:15px}
-.app{display:flex;flex-direction:column;height:100vh;max-width:820px;margin:0 auto;position:relative}
-.screen{position:absolute;inset:0;display:flex;flex-direction:column;background:#0f0f14;transition:transform .3s ease}
-.screen.hidden{transform:translateX(100%);pointer-events:none}
-.header{display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(26,26,36,.98);border-bottom:1px solid rgba(255,255,255,.06);flex-shrink:0;min-height:60px}
-.back-btn{background:none;border:none;color:#f5f5f7;font-size:22px;cursor:pointer;padding:6px 10px;border-radius:10px;display:flex;align-items:center}
-.back-btn:hover{background:rgba(255,255,255,.08)}
-.header h1{font-size:17px;font-weight:600;flex:1}
-.icon-btn{width:38px;height:38px;border:none;background:transparent;border-radius:10px;font-size:17px;cursor:pointer;color:#f5f5f7;display:flex;align-items:center;justify-content:center}
-.icon-btn:hover{background:rgba(255,255,255,.08)}
-.avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#7c5cff,#ff5c8a);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;color:#fff;flex-shrink:0;position:relative;overflow:hidden}
+:root{
+--bg:#0a0a0f;--bg1:#13131a;--bg2:#1c1c26;--bg3:#252532;
+--border:rgba(255,255,255,.08);--text:#fff;--text2:#a1a1aa;--text3:#71717a;
+--accent:#8b5cf6;--accent2:#ec4899;--grad:linear-gradient(135deg,#8b5cf6,#ec4899);
+--green:#22c55e;--red:#ef4444;--yellow:#f59e0b;--radius:16px;
+}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+background:var(--bg);color:var(--text);height:100vh;overflow:hidden;font-size:15px;
+-webkit-font-smoothing:antialiased}
+.app{display:flex;flex-direction:column;height:100vh;max-width:480px;
+margin:0 auto;position:relative;background:var(--bg);overflow:hidden}
+.screen{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);
+transition:transform .35s cubic-bezier(.4,0,.2,1)}
+.screen.hidden{transform:translateX(100%)}
+.header{display:flex;align-items:center;gap:12px;padding:14px 16px;
+background:rgba(19,19,26,.85);backdrop-filter:blur(20px);
+border-bottom:1px solid var(--border);flex-shrink:0;min-height:64px;z-index:10}
+.back-btn{background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;
+padding:8px;border-radius:12px;display:flex;align-items:center;justify-content:center;
+width:40px;height:40px;transition:background .15s}
+.back-btn:active{background:rgba(255,255,255,.1);transform:scale(.92)}
+.header-title{font-size:17px;font-weight:600;flex:1;letter-spacing:-.3px}
+.icon-btn{width:40px;height:40px;border:none;background:rgba(255,255,255,.06);
+border-radius:12px;font-size:18px;cursor:pointer;color:var(--text);
+display:flex;align-items:center;justify-content:center;transition:all .15s}
+.icon-btn:active{background:rgba(255,255,255,.12);transform:scale(.92)}
+.avatar{width:48px;height:48px;border-radius:50%;background:var(--grad);
+display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;
+color:#fff;flex-shrink:0;position:relative;overflow:hidden;
+box-shadow:0 4px 12px rgba(139,92,246,.3)}
 .avatar img{width:100%;height:100%;object-fit:cover}
-.avatar.sm{width:38px;height:38px;font-size:14px}
-.online-dot{position:absolute;bottom:0;right:0;width:11px;height:11px;background:#31c48d;border-radius:50%;border:2px solid #1a1a24}
+.avatar.sm{width:42px;height:42px;font-size:16px}
+.avatar.lg{width:88px;height:88px;font-size:34px}
+.online-dot{position:absolute;bottom:1px;right:1px;width:13px;height:13px;
+background:var(--green);border-radius:50%;border:2.5px solid var(--bg1);
+box-shadow:0 0 8px rgba(34,197,94,.5)}
 .list{flex:1;overflow-y:auto;padding:8px 0}
-.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:40px 20px;text-align:center;color:#8e8e93}
-.empty .big{font-size:64px;margin-bottom:16px;opacity:.6}
-.empty h2{font-size:18px;color:#f5f5f7;margin-bottom:8px}
-.empty p{font-size:14px;line-height:1.6;max-width:280px;margin-bottom:24px}
-.chat-item{display:flex;gap:12px;padding:12px 16px;cursor:pointer;transition:background .12s;align-items:center}
-.chat-item:hover{background:rgba(124,92,255,.08)}
-.chat-item:active{background:rgba(124,92,255,.15)}
+.chat-item{display:flex;gap:14px;padding:14px 18px;cursor:pointer;
+transition:background .12s;align-items:center}
+.chat-item:active{background:rgba(139,92,246,.1)}
 .ci-info{flex:1;min-width:0}
-.ci-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-.ci-name{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ci-time{font-size:11px;color:#8e8e93;flex-shrink:0;margin-left:8px}
-.ci-bottom{display:flex;justify-content:space-between;align-items:center;gap:8px}
-.ci-last{font-size:13px;color:#8e8e93;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
-.unread{background:#7c5cff;color:#fff;font-size:11px;font-weight:700;min-width:20px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0}
-.fab{position:absolute;bottom:24px;right:20px;width:56px;height:56px;border-radius:50%;background:linear-gradient(135deg,#7c5cff,#ff5c8a);border:none;color:#fff;font-size:26px;cursor:pointer;box-shadow:0 6px 20px rgba(124,92,255,.5);display:flex;align-items:center;justify-content:center;z-index:20}
-.fab:active{transform:scale(.92)}
-.messages{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:6px}
-.msg{max-width:78%;padding:8px 12px;border-radius:16px;font-size:14.5px;line-height:1.45;word-wrap:break-word;position:relative;animation:slide .2s ease}
-@keyframes slide{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-.msg.own{align-self:flex-end;background:linear-gradient(135deg,#7c5cff,#9c7cff);color:#fff;border-bottom-right-radius:4px}
-.msg.other{align-self:flex-start;background:#232330;color:#f5f5f7;border-bottom-left-radius:4px}
+.ci-top{display:flex;justify-content:space-between;align-items:center;
+margin-bottom:5px;gap:8px}
+.ci-name{font-weight:600;font-size:15.5px;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;letter-spacing:-.2px}
+.ci-time{font-size:12px;color:var(--text3);flex-shrink:0}
+.ci-bottom{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.ci-last{font-size:13.5px;color:var(--text2);white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;flex:1}
+.unread{background:var(--grad);color:#fff;font-size:11.5px;font-weight:700;
+min-width:22px;height:22px;border-radius:11px;display:flex;align-items:center;
+justify-content:center;padding:0 7px;flex-shrink:0;
+box-shadow:0 2px 8px rgba(139,92,246,.5)}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;
+min-height:100%;padding:60px 30px;text-align:center}
+.empty-icon{width:120px;height:120px;border-radius:50%;
+background:radial-gradient(circle,rgba(139,92,246,.2) 0%,transparent 70%);
+display:flex;align-items:center;justify-content:center;font-size:56px;
+margin-bottom:24px;animation:float 3s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+.empty h2{font-size:20px;font-weight:700;color:var(--text);margin-bottom:10px;
+letter-spacing:-.3px}
+.empty p{font-size:14px;line-height:1.6;color:var(--text2);max-width:300px;
+margin-bottom:28px}
+.btn-primary{padding:14px 28px;border:none;border-radius:14px;background:var(--grad);
+color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;
+box-shadow:0 8px 24px rgba(139,92,246,.4);transition:all .2s;
+display:inline-flex;align-items:center;gap:8px}
+.btn-primary:active{transform:scale(.96)}
+.fab{position:absolute;bottom:24px;right:20px;width:60px;height:60px;
+border-radius:50%;background:var(--grad);border:none;color:#fff;font-size:28px;
+cursor:pointer;box-shadow:0 10px 30px rgba(139,92,246,.5);
+display:flex;align-items:center;justify-content:center;z-index:20;
+transition:transform .15s}
+.fab:active{transform:scale(.9)}
+.search-wrap{padding:14px 18px 8px;position:relative}
+.search-input{width:100%;padding:14px 18px 14px 46px;border:none;border-radius:14px;
+background:var(--bg1);color:var(--text);font-size:15px;outline:none;
+font-family:inherit;border:1px solid var(--border);transition:all .2s}
+.search-input:focus{border-color:var(--accent);background:var(--bg2);
+box-shadow:0 0 0 4px rgba(139,92,246,.15)}
+.search-icon{position:absolute;left:32px;top:29px;font-size:16px;
+color:var(--text3);pointer-events:none}
+.search-hint{padding:16px 24px;font-size:13px;color:var(--text3);
+text-align:center;line-height:1.7}
+.user-item{display:flex;gap:14px;padding:14px 18px;cursor:pointer;
+align-items:center;transition:background .12s}
+.user-item:active{background:rgba(139,92,246,.1)}
+.ui-info{flex:1;min-width:0}
+.ui-name{font-weight:600;font-size:15px;margin-bottom:3px;letter-spacing:-.2px}
+.ui-sub{font-size:12.5px;color:var(--text2)}
+.messages{flex:1;overflow-y:auto;padding:18px 16px;display:flex;
+flex-direction:column;gap:4px;
+background-image:radial-gradient(circle at 20% 10%,rgba(139,92,246,.06),transparent 40%),
+radial-gradient(circle at 80% 90%,rgba(236,72,153,.05),transparent 40%)}
+.msg{max-width:80%;padding:10px 14px;border-radius:18px;font-size:14.5px;
+line-height:1.5;word-wrap:break-word;word-break:break-word;position:relative;
+animation:msgIn .25s cubic-bezier(.4,0,.2,1);letter-spacing:-.1px}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px) scale(.97)}
+to{opacity:1;transform:translateY(0) scale(1)}}
+.msg.own{align-self:flex-end;background:var(--grad);color:#fff;
+border-bottom-right-radius:6px;box-shadow:0 4px 12px rgba(139,92,246,.25)}
+.msg.other{align-self:flex-start;background:var(--bg2);color:var(--text);
+border-bottom-left-radius:6px}
 .msg .text{white-space:pre-wrap;word-break:break-word}
-.msg .time{font-size:10px;opacity:.65;margin-top:4px;text-align:right;display:flex;justify-content:flex-end;gap:5px}
-.msg .reply-prev{font-size:11.5px;border-left:3px solid;padding:4px 8px;margin-bottom:5px;border-radius:6px;opacity:.85;background:rgba(0,0,0,.2);cursor:pointer}
-.msg .reactions{display:flex;gap:4px;margin-top:5px;flex-wrap:wrap}
-.reaction{background:rgba(255,255,255,.12);padding:2px 8px;border-radius:10px;font-size:11.5px;cursor:pointer;display:inline-flex;align-items:center;gap:3px}
-.reaction.mine{background:rgba(124,92,255,.4);border:1px solid #7c5cff}
-.input-area{display:flex;gap:8px;padding:10px 12px;background:rgba(26,26,36,.98);border-top:1px solid rgba(255,255,255,.06);padding-bottom:max(10px,env(safe-area-inset-bottom));align-items:flex-end;flex-shrink:0}
-.input-wrap{flex:1;display:flex;align-items:center;background:#232330;border-radius:22px;padding:4px 6px 4px 12px;transition:box-shadow .2s}
-.input-wrap:focus-within{box-shadow:0 0 0 2px #7c5cff}
-.input-wrap input{flex:1;padding:10px 6px;border:none;background:transparent;color:#f5f5f7;font-size:15px;outline:none;min-width:0}
-.send{width:46px;height:46px;border-radius:50%;background:linear-gradient(135deg,#7c5cff,#ff5c8a);border:none;color:#fff;font-size:17px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px rgba(124,92,255,.5)}
-.send:active{transform:scale(.9)}
-.reply-bar{display:none;background:#1a1a24;border-left:3px solid #7c5cff;padding:8px 14px;margin:0 12px;border-radius:10px;font-size:12.5px;justify-content:space-between;align-items:center;margin-bottom:6px}
+.msg .time{font-size:11px;opacity:.75;margin-top:5px;text-align:right;
+display:flex;justify-content:flex-end;align-items:center;gap:5px;font-weight:500}
+.msg.other .time{color:var(--text3)}
+.msg .reply-prev{font-size:12px;border-left:3px solid rgba(255,255,255,.6);
+padding:6px 10px;margin-bottom:6px;border-radius:8px;background:rgba(0,0,0,.2);
+cursor:pointer;opacity:.9}
+.msg.other .reply-prev{border-color:var(--accent);background:rgba(139,92,246,.12)}
+.rp-name{font-weight:700;font-size:11px;margin-bottom:2px;opacity:.95}
+.msg .reactions{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.reaction{background:rgba(255,255,255,.15);padding:3px 9px;border-radius:11px;
+font-size:12px;cursor:pointer;user-select:none;display:inline-flex;
+align-items:center;gap:4px;transition:transform .12s;font-weight:500}
+.reaction:active{transform:scale(.92)}
+.reaction.mine{background:rgba(255,255,255,.3);box-shadow:0 0 0 1.5px rgba(255,255,255,.5)}
+.msg.other .reaction{background:rgba(139,92,246,.2)}
+.msg.other .reaction.mine{background:rgba(139,92,246,.45)}
+.msg-actions{position:absolute;top:100%;right:0;background:var(--bg2);
+border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.7);display:none;
+flex-direction:column;padding:6px;z-index:200;min-width:180px;margin-top:6px;
+border:1px solid var(--border)}
+.msg-actions.active{display:flex;animation:popIn .15s ease}
+@keyframes popIn{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)}}
+.msg-actions button{background:none;border:none;font-size:14px;padding:10px 14px;
+cursor:pointer;border-radius:10px;text-align:left;color:var(--text);
+display:flex;align-items:center;gap:12px;font-family:inherit;font-weight:500;
+transition:background .12s}
+.msg-actions button:active{background:rgba(139,92,246,.25)}
+.msg-actions button.danger:active{background:rgba(239,68,68,.25)}
+.input-area{display:flex;gap:10px;padding:12px 16px;
+background:rgba(19,19,26,.95);backdrop-filter:blur(20px);
+border-top:1px solid var(--border);padding-bottom:max(12px,env(safe-area-inset-bottom));
+align-items:flex-end;flex-shrink:0}
+.input-wrap{flex:1;display:flex;align-items:center;background:var(--bg1);
+border-radius:22px;padding:4px 6px 4px 16px;border:1px solid var(--border);
+transition:all .2s}
+.input-wrap:focus-within{border-color:var(--accent);
+box-shadow:0 0 0 4px rgba(139,92,246,.12)}
+.input-wrap input{flex:1;padding:10px 6px;border:none;background:transparent;
+color:var(--text);font-size:15px;outline:none;font-family:inherit;min-width:0}
+.input-wrap input::placeholder{color:var(--text3)}
+.send{width:48px;height:48px;border-radius:50%;background:var(--grad);
+border:none;color:#fff;font-size:18px;cursor:pointer;flex-shrink:0;
+display:flex;align-items:center;justify-content:center;
+box-shadow:0 4px 16px rgba(139,92,246,.45);transition:transform .12s}
+.send:active{transform:scale(.88)}
+.emoji-bar{display:flex;gap:4px;padding:8px 12px;background:var(--bg1);
+overflow-x:auto;border-top:1px solid var(--border);scrollbar-width:none;flex-shrink:0}
+.emoji-bar::-webkit-scrollbar{display:none}
+.emoji-bar button{background:transparent;border:none;font-size:22px;cursor:pointer;
+padding:6px 8px;border-radius:10px;flex-shrink:0;transition:all .12s;line-height:1}
+.emoji-bar button:active{background:rgba(139,92,246,.2);transform:scale(1.2)}
+.reply-bar{display:none;background:var(--bg1);border-left:3px solid var(--accent);
+padding:10px 16px;margin:0 16px 6px;border-radius:12px;font-size:13px;
+justify-content:space-between;align-items:center;animation:slideIn .2s ease}
+@keyframes slideIn{from{opacity:0;transform:translateY(-6px)}
+to{opacity:1;transform:translateY(0)}}
 .reply-bar.active{display:flex}
 .reply-bar .info{flex:1;min-width:0}
-.reply-bar b{color:#7c5cff;display:block;font-size:11.5px;margin-bottom:2px}
-.reply-bar .rtext{opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.reply-bar button{background:none;border:none;color:#8e8e93;font-size:20px;cursor:pointer;padding:0 6px}
-.emoji-bar{display:flex;gap:4px;padding:6px 12px;background:#1a1a24;overflow-x:auto;border-top:1px solid rgba(255,255,255,.05);scrollbar-width:none}
-.emoji-bar::-webkit-scrollbar{display:none}
-.emoji-bar button{background:transparent;border:none;font-size:20px;cursor:pointer;padding:4px 6px;border-radius:8px;flex-shrink:0}
-.emoji-bar button:hover{background:rgba(255,255,255,.1);transform:scale(1.15)}
-.search-box{padding:12px 14px}
-.search-box input{width:100%;padding:12px 16px;border:none;border-radius:14px;background:#232330;color:#f5f5f7;font-size:15px;outline:none;font-family:inherit}
-.search-box input:focus{box-shadow:0 0 0 2px #7c5cff}
-.search-hint{padding:10px 14px;font-size:12px;color:#8e8e93;text-align:center;line-height:1.6}
-.user-item{display:flex;gap:12px;padding:12px 16px;cursor:pointer;align-items:center;transition:background .12s}
-.user-item:hover{background:rgba(124,92,255,.08)}
-.ui-info{flex:1;min-width:0}
-.ui-name{font-weight:600;font-size:15px;margin-bottom:3px}
-.ui-sub{font-size:12px;color:#8e8e93}
-.msg-actions{position:absolute;top:100%;right:0;background:#2a2a3a;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.6);display:none;flex-direction:column;padding:6px;z-index:200;min-width:170px;margin-top:4px}
-.msg-actions.active{display:flex}
-.msg-actions button{background:none;border:none;font-size:13.5px;padding:9px 12px;cursor:pointer;border-radius:8px;text-align:left;color:#fff;display:flex;align-items:center;gap:10px;font-family:inherit}
-.msg-actions button:hover{background:rgba(124,92,255,.25)}
-.msg-actions button.danger:hover{background:rgba(255,71,87,.25)}
-.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%) translateY(100px);background:#232330;padding:12px 20px;border-radius:12px;font-size:14px;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:2000;opacity:0;transition:all .3s;pointer-events:none;max-width:90%}
+.reply-bar b{color:var(--accent);display:block;font-size:12px;margin-bottom:2px}
+.reply-bar .rtext{opacity:.85;white-space:nowrap;overflow:hidden;
+text-overflow:ellipsis;font-size:12.5px}
+.reply-bar button{background:none;border:none;color:var(--text2);font-size:22px;
+cursor:pointer;padding:0 6px;line-height:1}
+.profile-content{padding:24px;overflow-y:auto;flex:1}
+.profile-avatar-wrap{display:flex;flex-direction:column;align-items:center;
+margin-bottom:28px}
+.profile-name{font-size:20px;font-weight:700;margin-top:14px;letter-spacing:-.3px}
+.profile-username{font-size:13.5px;color:var(--text2);margin-top:4px}
+.field{margin-bottom:16px}
+.field label{font-size:12.5px;color:var(--text2);display:block;margin-bottom:7px;
+font-weight:500;letter-spacing:.2px}
+.field input,.field textarea{width:100%;padding:13px 16px;
+border:1px solid var(--border);border-radius:12px;background:var(--bg1);
+color:var(--text);font-size:14.5px;outline:none;font-family:inherit;
+transition:all .2s;resize:none}
+.field input:focus,.field textarea:focus{border-color:var(--accent);
+background:var(--bg2);box-shadow:0 0 0 4px rgba(139,92,246,.12)}
+.toast{position:fixed;bottom:30px;left:50%;transform:translateX(-50%) translateY(100px);
+background:var(--bg2);padding:13px 22px;border-radius:14px;font-size:14px;
+box-shadow:0 10px 40px rgba(0,0,0,.6);z-index:2000;opacity:0;
+transition:all .3s cubic-bezier(.4,0,.2,1);pointer-events:none;max-width:90%;
+font-weight:500;border:1px solid var(--border)}
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
-.status-bar{padding:6px 14px;text-align:center;font-size:11px;background:#ffa502;color:#000;display:none}
+.status-bar{padding:8px 16px;text-align:center;font-size:12px;
+background:var(--yellow);color:#000;display:none;font-weight:600}
 .status-bar.show{display:block}
-.loading{text-align:center;color:#8e8e93;padding:40px;font-size:14px}
-.messages::-webkit-scrollbar{width:5px}
-.messages::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}
+.loading{text-align:center;color:var(--text3);padding:60px 20px;font-size:14px;
+line-height:1.7}
+.messages::-webkit-scrollbar,.list::-webkit-scrollbar{width:5px}
+.messages::-webkit-scrollbar-thumb,.list::-webkit-scrollbar-thumb{
+background:rgba(255,255,255,.12);border-radius:3px}
 @media(max-width:500px){.msg{max-width:85%}}
 </style>
 </head>
 <body>
 <div class="app">
-  <div class="status-bar" id="statusBar">Qayta ulanmoqda...</div>
+  <div class="status-bar" id="statusBar">🔄 Qayta ulanmoqda...</div>
 
-  <!-- CHAT LIST SCREEN -->
   <div class="screen" id="screenChats">
     <div class="header">
       <div class="avatar" id="myAvatar" onclick="openProfile()"><span id="myInit">?</span></div>
-      <h1 id="myTitle">Chatlar</h1>
-      <button class="icon-btn" onclick="showSearch()" title="Qidiruv">🔍</button>
+      <div class="header-title" id="myTitle">Chatlar</div>
+      <button class="icon-btn" onclick="showSearch()">🔍</button>
     </div>
-    <div class="list" id="chatList">
-      <div class="loading">Yuklanmoqda...</div>
-    </div>
+    <div class="list" id="chatList"><div class="loading">Yuklanmoqda...</div></div>
     <button class="fab" onclick="showSearch()">+</button>
   </div>
 
-  <!-- SEARCH SCREEN -->
   <div class="screen hidden" id="screenSearch">
     <div class="header">
       <button class="back-btn" onclick="hideSearch()">←</button>
-      <h1>Yangi chat</h1>
+      <div class="header-title">Yangi chat</div>
     </div>
-    <div class="search-box">
-      <input type="text" id="searchInput" placeholder="@username yoki ism..." oninput="doSearch()" autocomplete="off" autofocus>
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="searchInput" class="search-input" placeholder="@username yoki ism..." oninput="doSearch()" autocomplete="off">
     </div>
     <div class="search-hint" id="searchHint">
-      @username, t.me/username yoki ism kiriting.<br>
-      Faqat botga /start bosgan foydalanuvchilar topiladi.
+      @username, t.me/username yoki ism kiriting<br>
+      Faqat botga /start bosgan foydalanuvchilar topiladi
     </div>
     <div class="list" id="searchResults"></div>
   </div>
 
-  <!-- CHAT SCREEN -->
   <div class="screen hidden" id="screenChat">
     <div class="header">
       <button class="back-btn" onclick="closeChat()">←</button>
       <div class="avatar sm" id="chatAvatar"><span id="chatInit">?</span></div>
       <div style="flex:1;min-width:0">
-        <h1 id="chatName" style="font-size:15px;margin-bottom:2px">...</h1>
-        <div id="chatStatus" style="font-size:11px;color:#8e8e93">...</div>
+        <div id="chatName" style="font-size:15.5px;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">...</div>
+        <div id="chatStatus" style="font-size:12px;color:var(--text2)">...</div>
       </div>
     </div>
-    <div class="messages" id="chatMessages">
-      <div class="loading">Yuklanmoqda...</div>
-    </div>
+    <div class="messages" id="chatMessages"><div class="loading">Yuklanmoqda...</div></div>
     <div id="replyBar" class="reply-bar">
       <div class="info">
         <b id="replyName">Javob</b>
@@ -877,28 +533,28 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans
     <div class="emoji-bar" id="emojiBar"></div>
     <div class="input-area">
       <div class="input-wrap">
-        <input type="text" id="msgInput" placeholder="Xabar..." maxlength="4000" autocomplete="off">
+        <input type="text" id="msgInput" placeholder="Xabar yozing..." maxlength="4000" autocomplete="off">
       </div>
       <button class="send" id="sendBtn">➤</button>
     </div>
   </div>
 
-  <!-- PROFILE SCREEN -->
   <div class="screen hidden" id="screenProfile">
     <div class="header">
       <button class="back-btn" onclick="closeProfile()">←</button>
-      <h1>Profil</h1>
+      <div class="header-title">Profil</div>
     </div>
-    <div style="padding:20px;overflow-y:auto;flex:1">
-      <label style="font-size:12px;color:#8e8e93;display:block;margin-bottom:6px">Ism</label>
-      <input id="pfName" style="width:100%;padding:11px 14px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#232330;color:#f5f5f7;font-size:14px;outline:none;font-family:inherit;margin-bottom:14px">
-      <label style="font-size:12px;color:#8e8e93;display:block;margin-bottom:6px">Bio</label>
-      <textarea id="pfBio" style="width:100%;padding:11px 14px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#232330;color:#f5f5f7;font-size:14px;outline:none;font-family:inherit;min-height:80px;resize:vertical;margin-bottom:14px"></textarea>
-      <label style="font-size:12px;color:#8e8e93;display:block;margin-bottom:6px">Status emoji</label>
-      <input id="pfEmoji" maxlength="4" style="width:100%;padding:11px 14px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#232330;color:#f5f5f7;font-size:14px;outline:none;font-family:inherit;margin-bottom:14px">
-      <label style="font-size:12px;color:#8e8e93;display:block;margin-bottom:6px">Status matn</label>
-      <input id="pfStatus" maxlength="50" style="width:100%;padding:11px 14px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:#232330;color:#f5f5f7;font-size:14px;outline:none;font-family:inherit;margin-bottom:14px">
-      <button onclick="saveProfile()" style="width:100%;padding:14px;border:none;border-radius:12px;background:linear-gradient(135deg,#7c5cff,#ff5c8a);color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Saqlash</button>
+    <div class="profile-content">
+      <div class="profile-avatar-wrap">
+        <div class="avatar lg" id="pfAvatar"><span id="pfInit">?</span></div>
+        <div class="profile-name" id="pfNameDisplay">...</div>
+        <div class="profile-username" id="pfUsernameDisplay">@...</div>
+      </div>
+      <div class="field"><label>Ism</label><input id="pfName" maxlength="50" placeholder="Ismingiz"></div>
+      <div class="field"><label>Bio</label><textarea id="pfBio" maxlength="200" placeholder="O'zingiz haqingizda..." rows="3"></textarea></div>
+      <div class="field"><label>Status emoji</label><input id="pfEmoji" maxlength="4" placeholder="😎"></div>
+      <div class="field"><label>Status matn</label><input id="pfStatus" maxlength="50" placeholder="Band / Bo'sh..."></div>
+      <button class="btn-primary" style="width:100%;justify-content:center" onclick="saveProfile()">💾 Saqlash</button>
     </div>
   </div>
 
@@ -907,16 +563,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Inter','Segoe UI',Roboto,sans
 
 <script>
 var tg = window.Telegram ? window.Telegram.WebApp : null;
-if (tg) { tg.ready(); tg.expand(); }
+if (tg) { tg.ready(); tg.expand(); tg.setHeaderColor && tg.setHeaderColor('#0a0a0f'); tg.setBackgroundColor && tg.setBackgroundColor('#0a0a0f'); }
 
-var ME = null;
-var currentChatId = null;
-var currentChatUser = null;
-var lastMsgId = 0;
-var replyId = null;
-var ws = null;
-var reconnectTimer = null;
-var reconnectAttempts = 0;
+var ME = null, currentChatId = null, currentChatUser = null;
+var lastMsgId = 0, replyId = null;
+var ws = null, reconnectTimer = null, reconnectAttempts = 0;
 var rendered = {};
 var EMOJIS = ["\uD83D\uDC4D","\u2764\uFE0F","\uD83D\uDD25","\uD83D\uDE02","\uD83D\uDE2E","\uD83D\uDE22","\uD83C\uDF89","\uD83D\uDC4F","\uD83D\uDE4F","\uD83D\uDCAF","\u2705","\uD83D\uDE0D","\uD83E\uDD14","\uD83D\uDE0E","\uD83D\uDCAA","\uD83D\uDE80","\u2B50","\uD83D\uDCAC","\uD83D\uDCCC","\u26A1"];
 
@@ -972,11 +623,8 @@ function renderAvatar(u, cls) {
   cls = cls || "";
   var init = getInitials(u);
   var html = '<div class="avatar ' + cls + '">';
-  if (u && u.photo_url) {
-    html += '<img src="' + u.photo_url + '">';
-  } else {
-    html += '<span>' + init + '</span>';
-  }
+  if (u && u.photo_url) html += '<img src="' + u.photo_url + '">';
+  else html += '<span>' + init + '</span>';
   if (u && u.is_online) html += '<div class="online-dot"></div>';
   html += '</div>';
   return html;
@@ -999,7 +647,7 @@ function initEmojiBar() {
 
 function init() {
   if (!tg || !tg.initData) {
-    document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#8e8e93">Telegram orqali oching</div>';
+    document.body.innerHTML = '<div style="padding:60px 24px;text-align:center;color:#a1a1aa;font-family:Inter,sans-serif"><div style="font-size:64px;margin-bottom:20px">📱</div><h2 style="color:#fff;margin-bottom:12px">Telegram orqali oching</h2><p>Bu ilova faqat Telegram Mini App sifatida ishlaydi</p></div>';
     return;
   }
   initEmojiBar();
@@ -1023,14 +671,13 @@ function updateHeader() {
   document.getElementById("myTitle").textContent = ME.first_name || "Chatlar";
 }
 
-// ═══════════════ CHAT LIST ═══════════════
 function loadChats() {
   api("/api/chats", { method: "POST", body: JSON.stringify({ initData: tg.initData }) })
     .then(function(d){
       if (!d.ok) return;
       var c = document.getElementById("chatList");
       if (!d.chats.length) {
-        c.innerHTML = '<div class="empty"><div class="big">💬</div><h2>Hozircha chatlar yo\'q</h2><p>Qidiruv orqali yangi chat boshlang va boshqa foydalanuvchilar bilan yozishing</p><button onclick="showSearch()" style="padding:12px 24px;border:none;border-radius:12px;background:linear-gradient(135deg,#7c5cff,#ff5c8a);color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">🔍 Qidirish</button></div>';
+        c.innerHTML = '<div class="empty"><div class="empty-icon">💬</div><h2>Hozircha chatlar yo\'q</h2><p>Qidiruv orqali yangi chat boshlang va boshqa foydalanuvchilar bilan yozishing</p><button class="btn-primary" onclick="showSearch()">🔍 Qidirish</button></div>';
         return;
       }
       var h = "";
@@ -1038,8 +685,7 @@ function loadChats() {
         var o = ch.other_user || {};
         h += '<div class="chat-item" onclick="openChat(' + ch.chat_id + ')">';
         h += renderAvatar(o);
-        h += '<div class="ci-info">';
-        h += '<div class="ci-top"><div class="ci-name">' + esc(o.first_name || "User") + '</div><div class="ci-time">' + (ch.last_message_at ? fmtTime(ch.last_message_at) : "") + '</div></div>';
+        h += '<div class="ci-info"><div class="ci-top"><div class="ci-name">' + esc(o.first_name || "User") + '</div><div class="ci-time">' + (ch.last_message_at ? fmtTime(ch.last_message_at) : "") + '</div></div>';
         h += '<div class="ci-bottom"><div class="ci-last">' + esc((ch.last_message_text || "Chat boshlash").substring(0, 50)) + '</div>';
         if (ch.unread > 0) h += '<div class="unread">' + ch.unread + '</div>';
         h += '</div></div></div>';
@@ -1048,11 +694,11 @@ function loadChats() {
     });
 }
 
-// ═══════════════ SEARCH ═══════════════
 function showSearch() {
   document.getElementById("screenSearch").classList.remove("hidden");
   document.getElementById("searchResults").innerHTML = "";
   document.getElementById("searchInput").value = "";
+  document.getElementById("searchHint").style.display = "block";
   setTimeout(function(){ document.getElementById("searchInput").focus(); }, 200);
   haptic();
 }
@@ -1077,7 +723,7 @@ function doSearch() {
       if (!d.ok) return;
       var users = d.users.filter(function(u){ return !ME || u.id !== ME.id; });
       if (!users.length) {
-        r.innerHTML = '<div class="empty"><div class="big">🔍</div><h2>Topilmadi</h2><p>"' + esc(q) + '" bo\'yicha hech kim topilmadi.<br>Faqat botga /start bosgan odamlar qidiriladi.</p></div>';
+        r.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div><h2>Topilmadi</h2><p>"' + esc(q) + '" bo\'yicha hech kim topilmadi.<br>Faqat botga /start bosgan odamlar qidiriladi.</p></div>';
         return;
       }
       var h = "";
@@ -1094,28 +740,22 @@ function doSearch() {
 
 function startChat(userId) {
   haptic();
-  api("/api/chats/open", {
-    method: "POST",
-    body: JSON.stringify({ initData: tg.initData, user_id: userId })
-  }).then(function(d){
-    if (!d.ok) { toast(d.error || "Xato"); return; }
-    hideSearch();
-    openChat(d.chat_id, d.other_user);
-  });
+  api("/api/chats/open", { method: "POST", body: JSON.stringify({ initData: tg.initData, user_id: userId }) })
+    .then(function(d){
+      if (!d.ok) { toast(d.error || "Xato"); return; }
+      hideSearch();
+      openChat(d.chat_id, d.other_user);
+    });
 }
 
-// ═══════════════ CHAT ═══════════════
 function openChat(chatId, otherUser) {
   currentChatId = chatId;
   lastMsgId = 0;
   rendered = {};
   document.getElementById("screenChat").classList.remove("hidden");
   document.getElementById("chatMessages").innerHTML = '<div class="loading">Yuklanmoqda...</div>';
-
-  if (otherUser) {
-    setChatHeader(otherUser);
-  } else {
-    // chat listdan chaqirilganda userni topish
+  if (otherUser) setChatHeader(otherUser);
+  else {
     api("/api/chats", { method: "POST", body: JSON.stringify({ initData: tg.initData }) })
       .then(function(d){
         if (d.ok) {
@@ -1124,7 +764,6 @@ function openChat(chatId, otherUser) {
         }
       });
   }
-
   loadMessages(true);
   setTimeout(function(){ document.getElementById("msgInput").focus(); }, 200);
 }
@@ -1132,14 +771,11 @@ function openChat(chatId, otherUser) {
 function setChatHeader(u) {
   currentChatUser = u;
   document.getElementById("chatInit").textContent = getInitials(u);
-  if (u.photo_url) {
-    document.getElementById("chatAvatar").innerHTML = '<img src="' + u.photo_url + '">' + (u.is_online ? '<div class="online-dot"></div>' : '');
-  }
+  var av = document.getElementById("chatAvatar");
+  av.innerHTML = (u.photo_url ? '<img src="' + u.photo_url + '">' : '<span>' + getInitials(u) + '</span>') + (u.is_online ? '<div class="online-dot"></div>' : '');
   document.getElementById("chatName").textContent = u.first_name || "User";
   var status = u.is_online ? "🟢 Online" : (u.last_seen ? "oxirgi: " + fmtTime(u.last_seen) : "");
-  if (u.status_emoji || u.status_text) {
-    status = (u.status_emoji || "") + " " + (u.status_text || status);
-  }
+  if (u.status_emoji || u.status_text) status = (u.status_emoji || "") + " " + (u.status_text || status);
   document.getElementById("chatStatus").textContent = status;
 }
 
@@ -1188,7 +824,7 @@ function appendMsg(m, scroll) {
   d.dataset.id = m.id;
   var h = "";
   if (m.reply_preview) {
-    h += '<div class="reply-prev" onclick="scrollTo(' + m.reply_to_id + ')">↩ ' + esc(m.reply_preview) + '</div>';
+    h += '<div class="reply-prev" onclick="scrollTo(' + m.reply_to_id + ')"><div class="rp-name">↩ Javob</div>' + esc(m.reply_preview) + '</div>';
   }
   h += '<div class="text">' + esc(m.text) + '</div>';
   h += '<div class="time">' + (m.is_edited ? '<span style="font-style:italic;opacity:.7">tahrir</span>' : "") + fmtTime(m.created_at) + (own ? " ✓✓" : "") + '</div>';
@@ -1222,13 +858,12 @@ function showActions(d, m) {
   var own = ME && m.sender_id === ME.id;
   var a = document.createElement("div");
   a.className = "msg-actions active";
+  var t = esc(m.text || "").substring(0, 40);
   var btns = "";
-  btns += '<button onclick="setReply(' + m.id + ',\'' + esc((m.text||"").substring(0,40)).replace(/'/g,"\\'") + '\')">↩ Javob</button>';
+  btns += '<button onclick="setReply(' + m.id + ',\'' + t.replace(/'/g, "\\'").replace(/"/g, "&quot;") + '\')">↩ Javob</button>';
   btns += '<button onclick="quickReact(' + m.id + ')">😀 Reaksiya</button>';
-  btns += '<button onclick="copyText(\'' + esc(m.text||"").replace(/'/g,"\\'").replace(/"/g,"&quot;") + '\')">📋 Nusxalash</button>';
-  if (own) {
-    btns += '<button class="danger" onclick="delMsg(' + m.id + ')">🗑 O\'chirish</button>';
-  }
+  btns += '<button onclick="copyText(\'' + esc(m.text || "").replace(/'/g, "\\'").replace(/"/g, "&quot;") + '\')">📋 Nusxalash</button>';
+  if (own) btns += '<button class="danger" onclick="delMsg(' + m.id + ')">🗑 O\'chirish</button>';
   a.innerHTML = btns;
   d.appendChild(a);
   setTimeout(function(){
@@ -1288,7 +923,7 @@ function scrollTo(id) {
   var el = document.querySelector('.msg[data-id="' + id + '"]');
   if (el) {
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.style.boxShadow = "0 0 0 3px #7c5cff";
+    el.style.boxShadow = "0 0 0 3px #8b5cf6";
     setTimeout(function(){ el.style.boxShadow = ""; }, 1200);
   }
 }
@@ -1319,10 +954,13 @@ function sendMsg() {
   });
 }
 
-// ═══════════════ PROFILE ═══════════════
 function openProfile() {
   if (!ME) return;
   document.getElementById("screenProfile").classList.remove("hidden");
+  document.getElementById("pfInit").textContent = getInitials(ME);
+  if (ME.photo_url) document.getElementById("pfAvatar").innerHTML = '<img src="' + ME.photo_url + '">';
+  document.getElementById("pfNameDisplay").textContent = ME.first_name || "User";
+  document.getElementById("pfUsernameDisplay").textContent = ME.username ? "@" + ME.username : "";
   document.getElementById("pfName").value = ME.first_name || "";
   document.getElementById("pfBio").value = ME.bio || "";
   document.getElementById("pfEmoji").value = ME.status_emoji || "";
@@ -1355,7 +993,6 @@ function saveProfile() {
   });
 }
 
-// ═══════════════ WEBSOCKET ═══════════════
 function connectWS() {
   if (!tg || !tg.initData) return;
   var proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1437,7 +1074,346 @@ init();
 """
 
 
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return HTMLResponse(HTML_PAGE)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/ping")
+async def ping():
+    return "pong"
+
+
+@app.post(WEBHOOK_PATH)
+async def webhook(request: Request):
+    if request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
+        return JSONResponse({"ok": False}, status_code=403)
+    if not bot or not dp:
+        return JSONResponse({"ok": False}, status_code=503)
+    try:
+        u = types.Update.model_validate(await request.json())
+        await dp.feed_update(bot=bot, update=u)
+    except Exception as e:
+        logger.error(f"Webhook: {e}")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/init")
+async def api_init(req: InitReq):
+    tgu = verify_init_data(req.initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "initData yaroqsiz"}, status_code=401)
+    async for s in get_session():
+        u = await get_or_create_user(s, tgu)
+        if u.is_banned:
+            return JSONResponse({"ok": False, "error": "Siz banlangansiz"}, status_code=403)
+        return {"ok": True, "user": user_dict(u)}
+
+
+@app.put("/api/me")
+async def api_me_update(req: ProfileReq):
+    tgu = verify_init_data(req.initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    async for s in get_session():
+        u = await get_or_create_user(s, tgu)
+        if req.first_name is not None: u.first_name = req.first_name[:100]
+        if req.bio is not None: u.bio = req.bio[:500]
+        if req.status_emoji is not None: u.status_emoji = req.status_emoji[:10]
+        if req.status_text is not None: u.status_text = req.status_text[:100]
+        await s.commit()
+        await s.refresh(u)
+        return {"ok": True, "user": user_dict(u)}
+
+
+@app.get("/api/users/search")
+async def api_search(q: str = ""):
+    q = q.strip()
+    if not q:
+        return {"ok": True, "users": []}
+    q = q.lstrip("@")
+    if "t.me/" in q:
+        q = q.split("t.me/")[-1]
+    if "telegram.me/" in q:
+        q = q.split("telegram.me/")[-1]
+    q = q.split("?")[0].strip()
+    if len(q) < 1:
+        return {"ok": True, "users": []}
+    async for s in get_session():
+        r = await s.execute(select(User).where(or_(
+            User.username.ilike(f"%{q}%"),
+            User.first_name.ilike(f"%{q}%"),
+            User.last_name.ilike(f"%{q}%"),
+        )).where(User.is_banned == False).limit(20))
+        return {"ok": True, "users": [user_dict(u) for u in r.scalars().all()]}
+
+
+@app.post("/api/chats")
+async def api_chats(req: InitReq):
+    tgu = verify_init_data(req.initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    my_id = tgu["id"]
+    async for s in get_session():
+        r = await s.execute(select(Chat).where(or_(
+            Chat.user1_id == my_id, Chat.user2_id == my_id
+        )).order_by(desc(Chat.last_message_at), desc(Chat.created_at)))
+        chats = r.scalars().all()
+        result = []
+        for c in chats:
+            other_id = c.user2_id if c.user1_id == my_id else c.user1_id
+            ur = await s.execute(select(User).where(User.telegram_id == other_id))
+            other = ur.scalar_one_or_none()
+            unread = await s.scalar(select(func.count(Message.id)).where(and_(
+                Message.chat_id == c.id,
+                Message.sender_id != my_id,
+                Message.is_read == False,
+                Message.is_deleted == False,
+            ))) or 0
+            result.append({
+                "chat_id": c.id,
+                "other_user": user_dict(other) if other else None,
+                "last_message_text": c.last_message_text,
+                "last_message_at": c.last_message_at.isoformat() if c.last_message_at else None,
+                "unread": unread,
+            })
+        return {"ok": True, "chats": result}
+
+
+@app.post("/api/chats/open")
+async def api_open_chat(req: OpenChatReq):
+    tgu = verify_init_data(req.initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    my_id = tgu["id"]
+    other_id = req.user_id
+    if my_id == other_id:
+        return JSONResponse({"ok": False, "error": "O'zingiz bilan chat ocholmaysiz"}, status_code=400)
+    a, b = min(my_id, other_id), max(my_id, other_id)
+    key = f"{a}_{b}"
+    async for s in get_session():
+        r = await s.execute(select(User).where(User.telegram_id == other_id))
+        other = r.scalar_one_or_none()
+        if not other:
+            return JSONResponse({"ok": False, "error": "Foydalanuvchi topilmadi"}, status_code=404)
+        r = await s.execute(select(Chat).where(Chat.chat_key == key))
+        chat = r.scalar_one_or_none()
+        if not chat:
+            chat = Chat(user1_id=a, user2_id=b, chat_key=key)
+            s.add(chat)
+            await s.commit()
+            await s.refresh(chat)
+        return {"ok": True, "chat_id": chat.id, "other_user": user_dict(other)}
+
+
+@app.get("/api/chats/{chat_id}/messages")
+async def api_messages(chat_id: int, initData: str = "", after_id: int = 0):
+    tgu = verify_init_data(initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    my_id = tgu["id"]
+    async for s in get_session():
+        r = await s.execute(select(Chat).where(Chat.id == chat_id))
+        c = r.scalar_one_or_none()
+        if not c or my_id not in (c.user1_id, c.user2_id):
+            return JSONResponse({"ok": False, "error": "Ruxsat yo'q"}, status_code=403)
+        if after_id > 0:
+            r = await s.execute(select(Message).where(and_(
+                Message.chat_id == chat_id, Message.id > after_id, Message.is_deleted == False
+            )).order_by(Message.id.asc()).limit(200))
+        else:
+            r = await s.execute(select(Message).where(and_(
+                Message.chat_id == chat_id, Message.is_deleted == False
+            )).order_by(desc(Message.id)).limit(100))
+        msgs = list(r.scalars().all())
+        if after_id == 0:
+            msgs.reverse()
+        rids = [m.reply_to_id for m in msgs if m.reply_to_id]
+        rmap = {}
+        if rids:
+            rr = await s.execute(select(Message).where(Message.id.in_(rids)))
+            rmap = {x.id: x for x in rr.scalars().all()}
+        result = []
+        for m in msgs:
+            rp = None
+            if m.reply_to_id and m.reply_to_id in rmap:
+                rp = rmap[m.reply_to_id].text[:60]
+                if len(rmap[m.reply_to_id].text) > 60:
+                    rp += "..."
+            result.append(msg_dict(m, rp))
+        await s.execute(
+            Message.__table__.update().where(and_(
+                Message.chat_id == chat_id, Message.sender_id != my_id, Message.is_read == False
+            )).values(is_read=True)
+        )
+        await s.commit()
+        return {"ok": True, "messages": result}
+
+
+@app.post("/api/chats/{chat_id}/messages")
+async def api_send(chat_id: int, req: SendMsgReq):
+    tgu = verify_init_data(req.initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    my_id = tgu["id"]
+    text = (req.text or "").strip()
+    if not text:
+        return JSONResponse({"ok": False, "error": "Bo'sh xabar"}, status_code=400)
+    if len(text) > 4000:
+        return JSONResponse({"ok": False, "error": "Juda uzun"}, status_code=400)
+    async for s in get_session():
+        r = await s.execute(select(Chat).where(Chat.id == chat_id))
+        c = r.scalar_one_or_none()
+        if not c or my_id not in (c.user1_id, c.user2_id):
+            return JSONResponse({"ok": False, "error": "Ruxsat yo'q"}, status_code=403)
+        u = await get_or_create_user(s, tgu)
+        rp = None
+        if req.reply_to_id:
+            rr = await s.execute(select(Message).where(Message.id == req.reply_to_id))
+            p = rr.scalar_one_or_none()
+            if p:
+                rp = p.text[:60] + ("..." if len(p.text) > 60 else "")
+        m = Message(chat_id=chat_id, sender_id=my_id, text=text, reply_to_id=req.reply_to_id)
+        s.add(m)
+        c.last_message_text = text[:200]
+        c.last_message_at = datetime.utcnow()
+        u.xp += 5
+        u.level = 1 + u.xp // 100
+        u.coins += 2
+        await s.commit()
+        await s.refresh(m)
+        pl = msg_dict(m, rp)
+        await manager.send_to_many([c.user1_id, c.user2_id], {"type": "new_message", "data": pl})
+        return {"ok": True, "message": pl}
+
+
+@app.delete("/api/messages/{mid}")
+async def api_del(mid: int, req: InitReq):
+    tgu = verify_init_data(req.initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    async for s in get_session():
+        r = await s.execute(select(Message).where(Message.id == mid))
+        m = r.scalar_one_or_none()
+        if not m:
+            return JSONResponse({"ok": False, "error": "Topilmadi"}, status_code=404)
+        if m.sender_id != tgu["id"]:
+            return JSONResponse({"ok": False, "error": "Ruxsat yo'q"}, status_code=403)
+        r = await s.execute(select(Chat).where(Chat.id == m.chat_id))
+        c = r.scalar_one_or_none()
+        m.is_deleted = True
+        await s.commit()
+        if c:
+            await manager.send_to_many([c.user1_id, c.user2_id],
+                {"type": "delete_message", "data": {"id": mid, "chat_id": m.chat_id}})
+        return {"ok": True}
+
+
+@app.post("/api/messages/{mid}/react")
+async def api_react(mid: int, req: ReactReq):
+    tgu = verify_init_data(req.initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    e = req.emoji.strip()[:8]
+    if not e:
+        return JSONResponse({"ok": False, "error": "Emoji kerak"}, status_code=400)
+    async for s in get_session():
+        r = await s.execute(select(Message).where(Message.id == mid))
+        m = r.scalar_one_or_none()
+        if not m:
+            return JSONResponse({"ok": False, "error": "Topilmadi"}, status_code=404)
+        try:
+            reacts = json.loads(m.reactions or "{}")
+        except Exception:
+            reacts = {}
+        us = reacts.get(e, [])
+        uid = tgu["id"]
+        if uid in us:
+            us.remove(uid)
+            if not us:
+                del reacts[e]
+        else:
+            us.append(uid)
+            reacts[e] = us
+        m.reactions = json.dumps(reacts)
+        await s.commit()
+        r = await s.execute(select(Chat).where(Chat.id == m.chat_id))
+        c = r.scalar_one_or_none()
+        if c:
+            await manager.send_to_many([c.user1_id, c.user2_id],
+                {"type": "reaction", "data": {"id": mid, "chat_id": m.chat_id, "reactions": m.reactions}})
+        return {"ok": True, "reactions": reacts}
+
+
+@app.post("/api/upload")
+async def api_upload(file: UploadFile = File(...), initData: str = Form(...)):
+    tgu = verify_init_data(initData)
+    if not tgu:
+        return JSONResponse({"ok": False, "error": "Auth"}, status_code=401)
+    contents = await file.read()
+    if len(contents) > 10 * 1024 * 1024:
+        return JSONResponse({"ok": False, "error": "Fayl 10 MB dan oshmasin"}, status_code=400)
+    ext = os.path.splitext(file.filename or "file")[1].lower()
+    allowed = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".mov", ".mp3", ".wav", ".ogg", ".pdf", ".docx", ".xlsx", ".txt", ".zip")
+    if ext not in allowed:
+        return JSONResponse({"ok": False, "error": "Fayl turi ruxsat etilmagan"}, status_code=400)
+    fname = uuid.uuid4().hex + ext
+    with open(os.path.join(UPLOAD_DIR, fname), "wb") as f:
+        f.write(contents)
+    return {"ok": True, "url": "/uploads/" + fname}
+
+
+@app.websocket("/ws")
+async def ws_ep(ws: WebSocket, token: str = ""):
+    tgu = verify_init_data(token)
+    if not tgu:
+        await ws.close(code=4001)
+        return
+    uid = tgu["id"]
+    async for s in get_session():
+        r = await s.execute(select(User).where(User.telegram_id == uid))
+        u = r.scalar_one_or_none()
+        if not u or u.is_banned:
+            await ws.close(code=4003)
+            return
+        u.is_online = True
+        await s.commit()
+    await manager.connect(uid, ws)
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(ws.receive_text(), timeout=30)
+                try:
+                    p = json.loads(data)
+                    if p.get("type") == "ping":
+                        await ws.send_text(json.dumps({"type": "pong"}))
+                except Exception:
+                    pass
+            except asyncio.TimeoutError:
+                try:
+                    await ws.send_text(json.dumps({"type": "ping"}))
+                except Exception:
+                    break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        manager.disconnect(uid, ws)
+        async for s in get_session():
+            r = await s.execute(select(User).where(User.telegram_id == uid))
+            u = r.scalar_one_or_none()
+            if u:
+                u.is_online = False
+                u.last_seen = datetime.utcnow()
+                await s.commit()
+
+
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"🚀 http://0.0.0.0:{PORT}")
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
